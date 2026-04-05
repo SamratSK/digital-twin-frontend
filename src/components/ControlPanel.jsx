@@ -139,8 +139,8 @@ export default function ControlPanel({
     <>
       <header className="app-topbar">
         <div className="command-brand">
-          <div className="command-title">Operation NEO</div>
-          <div className="command-subtitle">Bengaluru Command</div>
+          <div className="command-title">Resilience</div>
+          <div className="command-subtitle">Bengaluru Command Center</div>
         </div>
 
         <div className="command-clock">{clockLabel}</div>
