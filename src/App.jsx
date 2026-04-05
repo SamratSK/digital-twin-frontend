@@ -90,7 +90,8 @@ import {
   buildSynthverseTrafficEventsGeoJSON,
   createEmptySynthverseApiState,
   DEFAULT_SYNTHVERSE_API_BASE_URL,
-  fetchSynthverseAreaScore,
+  enrichCityResilienceWithCoordinates,
+  fetchSynthverseCityResilience,
   fetchSynthverseApprovedEvents,
   fetchSynthverseSensors,
   normalizeSynthverseApiBaseUrl,
@@ -101,7 +102,6 @@ const TRAFFIC_HOTSPOT_ACTIVATION_DELAY_MS = 900;
 const SYNTHVERSE_API_LOCAL_STORAGE_KEY = "synthverse-api-base-url";
 const SYNTHVERSE_CORE_REFRESH_MS = 15000;
 const SYNTHVERSE_ANALYSIS_REFRESH_MS = 120000;
-const CITY_ANALYSIS_MAX_CALLS = 20;
 const CAMPUS_FLOORPLAN_POLL_MS = 2000;
 const CAMPUS_EMERGENCY_TEMPERATURE = 37;
 
@@ -130,7 +130,7 @@ function createEmptyCityAnalysisState() {
     connected: false,
     error: "",
     lastSyncAt: "",
-    rows: [],
+    data: null,
     geojson: emptyFeatureCollection(),
   };
 }
@@ -767,24 +767,14 @@ function App() {
     });
 
     try {
-      const coordinates = buildCityAnalysisGridCoordinates(MAP_VIEW_BOUNDS, 4, 5);
-      const rows = (
-        await Promise.all(
-          coordinates.map(async (coordinate, index) => {
-            const score = await fetchSynthverseAreaScore(normalizedSynthverseApiBaseUrl, coordinate);
-            return score
-              ? {
-                  ...score,
-                  location: {
-                    latitude: Number(score?.location?.latitude ?? coordinate[1]),
-                    longitude: Number(score?.location?.longitude ?? coordinate[0]),
-                    label: `Zone ${index + 1}`,
-                  },
-                }
-              : null;
-          }),
-        )
-      ).filter(Boolean);
+      const cityResilienceResponse = await fetchSynthverseCityResilience(
+        normalizedSynthverseApiBaseUrl,
+        "Bengaluru",
+      );
+      const cityResilience = await enrichCityResilienceWithCoordinates(
+        cityResilienceResponse,
+        "Bengaluru",
+      );
 
       startTransition(() => {
         setCityAnalysisState({
@@ -792,8 +782,8 @@ function App() {
           connected: true,
           error: "",
           lastSyncAt: new Date().toISOString(),
-          rows,
-          geojson: buildSynthverseCityAnalysisGeoJSON(rows),
+          data: cityResilience,
+          geojson: buildSynthverseCityAnalysisGeoJSON(cityResilience),
         });
       });
     } catch (error) {
@@ -2469,43 +2459,6 @@ function mergeEmergencyCoordinates(...lists) {
   return coordinates;
 }
 
-function buildCityAnalysisGridCoordinates(bounds, rowCount = 4, columnCount = 5) {
-  const southWest = bounds?.[0];
-  const northEast = bounds?.[1];
-
-  if (!Array.isArray(southWest) || !Array.isArray(northEast)) {
-    return [BENGALURU_CENTER];
-  }
-
-  const [west, south] = southWest;
-  const [east, north] = northEast;
-  const longitudeInset = (east - west) * 0.08;
-  const latitudeInset = (north - south) * 0.08;
-  const effectiveWest = west + longitudeInset;
-  const effectiveEast = east - longitudeInset;
-  const effectiveSouth = south + latitudeInset;
-  const effectiveNorth = north - latitudeInset;
-  const coordinates = [];
-
-  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
-    for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
-      if (coordinates.length >= CITY_ANALYSIS_MAX_CALLS) {
-        return coordinates;
-      }
-
-      const longitude =
-        effectiveWest +
-        ((columnIndex + 0.5) / columnCount) * (effectiveEast - effectiveWest);
-      const latitude =
-        effectiveSouth +
-        ((rowIndex + 0.5) / rowCount) * (effectiveNorth - effectiveSouth);
-      coordinates.push([longitude, latitude]);
-    }
-  }
-
-  return coordinates;
-}
-
 function capitalizeWord(value) {
   const text = `${value ?? ""}`;
   return text ? `${text[0].toUpperCase()}${text.slice(1)}` : "";
@@ -2653,6 +2606,7 @@ function renderCityAnalysisPopupHtml(properties) {
     `Police stations · ${formatPopupValue(properties.policeStations)}`,
     `Fire stations · ${formatPopupValue(properties.fireStations)}`,
     `Weakest sector facilities · ${formatPopupValue(properties.weakestSectorFacilityCount)}`,
+    properties.reason ? `Reason · ${escapeHtml(properties.reason)}` : null,
   ].filter(Boolean);
 
   return buildPopupHtml(title, subtitle, details);

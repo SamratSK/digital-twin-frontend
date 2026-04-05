@@ -259,8 +259,9 @@ export function buildAnalysisStatsSnapshot({
   sampleId,
   cityAnalysisState,
 }) {
-  const rows = Array.isArray(cityAnalysisState?.rows) ? cityAnalysisState.rows : [];
-  const totalScores = rows.map((row) => Number(row?.total_score ?? 0)).filter(Number.isFinite);
+  const cityData = cityAnalysisState?.data ?? null;
+  const rows = Array.isArray(cityData?.weakest_zones) ? cityData.weakest_zones : [];
+  const totalScores = rows.map((row) => Number(row?.score ?? 0)).filter(Number.isFinite);
   const averageScore =
     totalScores.length > 0
       ? totalScores.reduce((sum, value) => sum + value, 0) / totalScores.length
@@ -268,29 +269,29 @@ export function buildAnalysisStatsSnapshot({
   const strongestRow =
     rows.length > 0
       ? rows.reduce((best, row) =>
-          Number(row?.total_score ?? 0) > Number(best?.total_score ?? -Infinity) ? row : best,
+          Number(row?.score ?? 0) > Number(best?.score ?? -Infinity) ? row : best,
         rows[0])
       : null;
   const weakestRow =
     rows.length > 0
       ? rows.reduce((best, row) =>
-          Number(row?.total_score ?? Infinity) < Number(best?.total_score ?? Infinity) ? row : best,
+          Number(row?.score ?? Infinity) < Number(best?.score ?? Infinity) ? row : best,
         rows[0])
       : null;
   const weakestSectors = rows
     .map((row, index) => ({
-      id: `${row?.weakest_sector?.weakest_sector_id ?? row?.location?.latitude ?? index}:${index}`,
-      label: row?.weakest_sector?.weakest_sector_name ?? "Unavailable",
-      value: Number(row?.total_score ?? 0),
-      detail: `${Number(row?.weakest_sector?.facility_count ?? 0)} facilities`,
+      id: `${row?.sector ?? "sector"}:${index}`,
+      label: row?.sector ?? "Unavailable",
+      value: Number(row?.score ?? 0),
+      detail: row?.reason ?? `${Number(row?.metrics?.hospitals ?? 0) + Number(row?.metrics?.police ?? 0) + Number(row?.metrics?.fire ?? 0)} facilities`,
     }))
     .sort((left, right) => left.value - right.value)
     .slice(0, 5);
   const facilityTotals = rows.reduce(
     (totals, row) => {
-      totals.hospitals += Number(row?.facilities?.hospitals ?? 0);
-      totals.policeStations += Number(row?.facilities?.police_stations ?? 0);
-      totals.fireStations += Number(row?.facilities?.fire_stations ?? 0);
+      totals.hospitals += Number(row?.metrics?.hospitals ?? 0);
+      totals.policeStations += Number(row?.metrics?.police ?? 0);
+      totals.fireStations += Number(row?.metrics?.fire ?? 0);
       return totals;
     },
     {
@@ -306,19 +307,18 @@ export function buildAnalysisStatsSnapshot({
     connected: Boolean(cityAnalysisState?.connected),
     error: cityAnalysisState?.error ?? "",
     lastSyncAt: cityAnalysisState?.lastSyncAt ?? "",
+    city: cityData?.city ?? "Bengaluru",
+    totalInfrastructureCount: Number(cityData?.total_infrastructure_count ?? 0),
     sampleCount: rows.length,
     averageScore: roundValue(averageScore, 1),
-    strongestScore: roundValue(strongestRow?.total_score ?? 0, 0),
-    weakestScore: roundValue(weakestRow?.total_score ?? 0, 0),
-    strongestSectorName:
-      strongestRow?.weakest_sector?.weakest_sector_name ??
-      strongestRow?.location?.label ??
-      "Unavailable",
-    weakestSectorName:
-      weakestRow?.weakest_sector?.weakest_sector_name ??
-      weakestRow?.location?.label ??
-      "Unavailable",
-    weakestSectorFacilityCount: Number(weakestRow?.weakest_sector?.facility_count ?? 0),
+    strongestScore: roundValue(strongestRow?.score ?? 0, 0),
+    weakestScore: roundValue(weakestRow?.score ?? 0, 0),
+    strongestSectorName: strongestRow?.sector ?? "Unavailable",
+    weakestSectorName: weakestRow?.sector ?? "Unavailable",
+    weakestSectorFacilityCount:
+      Number(weakestRow?.metrics?.hospitals ?? 0) +
+      Number(weakestRow?.metrics?.police ?? 0) +
+      Number(weakestRow?.metrics?.fire ?? 0),
     hospitals: facilityTotals.hospitals,
     policeStations: facilityTotals.policeStations,
     fireStations: facilityTotals.fireStations,

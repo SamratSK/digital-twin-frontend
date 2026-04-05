@@ -695,7 +695,7 @@ export default function ControlPanel({
             <div className="sidebar-panel-body">
               <PanelIntro
                 title="City Analysis"
-                subtitle="Backend resilience scoring across sampled city sectors"
+                subtitle="Backend resilience scoring for Bengaluru"
               />
 
               <Card title="Score Scan">
@@ -705,11 +705,11 @@ export default function ControlPanel({
                   }`}
                 >
                   {cityAnalysisState.loading
-                    ? "Scanning city sectors..."
+                    ? "Loading city resilience..."
                     : cityAnalysisState.error
                       ? cityAnalysisState.error
                       : cityAnalysisState.connected
-                        ? `Live city score scan${cityAnalysisState.lastSyncAt ? ` · ${new Date(
+                        ? `Live city resilience${cityAnalysisState.lastSyncAt ? ` · ${new Date(
                             cityAnalysisState.lastSyncAt,
                           ).toLocaleTimeString("en-US", {
                             hour: "2-digit",
@@ -722,40 +722,37 @@ export default function ControlPanel({
 
                 <div className="water-summary" aria-label="City analysis summary">
                   <div className="summary-card">
-                    <span>Sectors</span>
-                    <strong>{cityAnalysisState.rows.length}</strong>
+                    <span>Weakest Zones</span>
+                    <strong>{cityAnalysisState.data?.weakest_zones?.length ?? 0}</strong>
                   </div>
                   <div className="summary-card">
                     <span>Status</span>
                     <strong>{cityAnalysisState.connected ? "Live" : "Down"}</strong>
                   </div>
                   <div className="summary-card">
-                    <span>Mode</span>
-                    <strong>Score Grid</strong>
+                    <span>City</span>
+                    <strong>{cityAnalysisState.data?.city ?? "Bengaluru"}</strong>
                   </div>
                 </div>
               </Card>
 
               <Card title="Weakest Sectors">
-                {cityAnalysisState.rows.length > 0 ? (
+                {Array.isArray(cityAnalysisState.data?.weakest_zones) &&
+                cityAnalysisState.data.weakest_zones.length > 0 ? (
                   <div className="hotspot-list" aria-label="Weakest sectors">
-                    {cityAnalysisState.rows
-                      .slice()
-                      .sort(
-                        (left, right) =>
-                          Number(left?.total_score ?? Infinity) -
-                          Number(right?.total_score ?? Infinity),
-                      )
-                      .slice(0, 5)
-                      .map((row, index) => (
+                    {cityAnalysisState.data.weakest_zones.slice(0, 5).map((row, index) => (
                         <div
-                          key={`${row?.location?.latitude ?? index}:${row?.location?.longitude ?? index}`}
+                          key={`${row?.sector ?? "sector"}:${index}`}
                           className="hotspot-item"
                         >
-                          <span>
-                            {index + 1}. {row?.weakest_sector?.weakest_sector_name ?? "Unavailable"}
-                          </span>
-                          <small>Score {Math.round(Number(row?.total_score ?? 0))}</small>
+                          <div className="api-event-copy">
+                            <span>
+                              {index + 1}. {row?.sector ?? "Unavailable"}
+                            </span>
+                            <small>
+                              Score {Math.round(Number(row?.score ?? 0))} · {row?.reason ?? "No reason"}
+                            </small>
+                          </div>
                         </div>
                       ))}
                   </div>

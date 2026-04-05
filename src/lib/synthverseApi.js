@@ -2,6 +2,8 @@ import { BENGALURU_CENTER } from "../data/offlineBengaluru.js";
 import { emptyFeatureCollection } from "./navigation.js";
 
 const FALLBACK_SYNTHVERSE_API_BASE_URL = "http://10.80.20.66:5000";
+const NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
+const CITY_RESILIENCE_GEOCODE_CACHE_PREFIX = "city-resilience-geocode:";
 
 export const DEFAULT_SYNTHVERSE_API_BASE_URL =
   typeof import.meta !== "undefined"
@@ -58,11 +60,34 @@ export async function fetchSynthverseApprovedEvents(baseUrl) {
   return Array.isArray(response?.data?.events) ? response.data.events : [];
 }
 
-export async function fetchSynthverseAreaScore(baseUrl, coordinate) {
-  const [longitude, latitude] = coordinate ?? BENGALURU_CENTER;
-  const query = `latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`;
-  const response = await requestJson(baseUrl, `/api/score?${query}`);
+export async function fetchSynthverseCityResilience(baseUrl, city = "Bengaluru") {
+  const query = `city=${encodeURIComponent(city)}`;
+  const response = await requestJson(baseUrl, `/api/city_resilience?${query}`);
   return response?.data ?? null;
+}
+
+export async function enrichCityResilienceWithCoordinates(cityResilience, city = "Bengaluru") {
+  const weakestZones = Array.isArray(cityResilience?.weakest_zones)
+    ? cityResilience.weakest_zones
+    : [];
+
+  const enrichedWeakestZones = [];
+
+  for (const zone of weakestZones) {
+    const fallbackCoordinate = resolveCityResilienceSectorCoordinate(zone?.sector);
+    const resolvedCoordinate = await resolveCityResilienceGeocode(zone?.sector, city, fallbackCoordinate);
+
+    enrichedWeakestZones.push({
+      ...zone,
+      latitude: resolvedCoordinate?.[1] ?? fallbackCoordinate?.[1] ?? BENGALURU_CENTER[1],
+      longitude: resolvedCoordinate?.[0] ?? fallbackCoordinate?.[0] ?? BENGALURU_CENTER[0],
+    });
+  }
+
+  return {
+    ...cityResilience,
+    weakest_zones: enrichedWeakestZones,
+  };
 }
 
 export async function fetchSynthverseEmergencyResources(baseUrl, coordinate) {
@@ -270,39 +295,45 @@ export function buildSynthverseScanAreaGeoJSON(coordinate, radiusMeters = SYNTHV
   };
 }
 
-export function buildSynthverseCityAnalysisGeoJSON(scoreRows) {
-  const features = (Array.isArray(scoreRows) ? scoreRows : [])
-    .map((row, index) => {
-      const latitude = Number(row?.location?.latitude ?? row?.latitude);
-      const longitude = Number(row?.location?.longitude ?? row?.longitude);
+export function buildSynthverseCityAnalysisGeoJSON(cityResilience) {
+  const weakestZones = Array.isArray(cityResilience?.weakest_zones)
+    ? cityResilience.weakest_zones
+    : [];
+  const features = weakestZones
+    .map((zone, index) => {
+      const resolvedCoordinate = resolveCityResilienceSectorCoordinate(zone?.sector);
 
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      if (!resolvedCoordinate) {
         return null;
       }
 
-      const totalScore = Number(row?.total_score ?? 0);
-      const hospitals = Number(row?.facilities?.hospitals ?? 0);
-      const policeStations = Number(row?.facilities?.police_stations ?? 0);
-      const fireStations = Number(row?.facilities?.fire_stations ?? 0);
-      const weakestSector = row?.weakest_sector ?? {};
+      const score = Number(zone?.score ?? 0);
+      const hospitals = Number(zone?.metrics?.hospitals ?? 0);
+      const policeStations = Number(zone?.metrics?.police ?? 0);
+      const fireStations = Number(zone?.metrics?.fire ?? 0);
 
       return {
         type: "Feature",
         geometry: {
           type: "Point",
-          coordinates: [longitude, latitude],
+          coordinates: [
+            Number(zone?.longitude ?? resolvedCoordinate[0]),
+            Number(zone?.latitude ?? resolvedCoordinate[1]),
+          ],
         },
         properties: {
           id: `city-analysis:${index + 1}`,
-          label: `${Math.round(totalScore)}`,
-          totalScore,
+          label: `${Math.round(score)}`,
+          totalScore: score,
           hospitals,
           policeStations,
           fireStations,
-          weakestSectorId: weakestSector?.weakest_sector_id ?? "",
-          weakestSectorName: weakestSector?.weakest_sector_name ?? "Unavailable",
-          weakestSectorFacilityCount: Number(weakestSector?.facility_count ?? 0),
+          weakestSectorName: zone?.sector ?? "Unavailable",
+          weakestSectorFacilityCount: hospitals + policeStations + fireStations,
           facilityCount: hospitals + policeStations + fireStations,
+          reason: zone?.reason ?? "",
+          latitude: Number(zone?.latitude ?? resolvedCoordinate[1]),
+          longitude: Number(zone?.longitude ?? resolvedCoordinate[0]),
         },
       };
     })
@@ -415,6 +446,27 @@ const SYNTHVERSE_EVENT_LOCATION_ALIASES = [
   { key: "richmond", coordinate: [77.6026, 12.9622] },
 ];
 
+const CITY_RESILIENCE_SECTOR_ALIASES = [
+  { key: "electronic city phase ii", coordinate: [77.682, 12.839] },
+  { key: "electronic city", coordinate: [77.664, 12.845] },
+  { key: "hsr layout sector 1", coordinate: [77.638, 12.912] },
+  { key: "hsr layout", coordinate: [77.651, 12.914] },
+  { key: "whitefield itpl", coordinate: [77.747, 12.989] },
+  { key: "whitefield", coordinate: [77.7481, 12.9925] },
+  { key: "koramangala", coordinate: [77.6245, 12.9352] },
+  { key: "jp nagar", coordinate: [77.5851, 12.9079] },
+  { key: "banashankari", coordinate: [77.5613, 12.925] },
+  { key: "rr nagar", coordinate: [77.518, 12.925] },
+  { key: "rajarajeshwari nagar", coordinate: [77.518, 12.925] },
+  { key: "yelahanka", coordinate: [77.596, 13.1] },
+  { key: "hebbal", coordinate: [77.593, 13.042] },
+  { key: "malleshwaram", coordinate: [77.57, 13.002] },
+  { key: "malleswaram", coordinate: [77.57, 13.002] },
+  { key: "indiranagar", coordinate: [77.64, 12.973] },
+  { key: "marathahalli", coordinate: [77.701, 12.956] },
+  { key: "bommanahalli", coordinate: [77.6305, 12.9003] },
+];
+
 function resolveSynthverseEventCoordinate(event) {
   const rawCandidates = [
     `${event?.venue_type ?? ""}`,
@@ -453,6 +505,115 @@ function resolveSynthverseEventCoordinate(event) {
         matchLabel: "bengaluru",
       }
     : null;
+}
+
+function resolveCityResilienceSectorCoordinate(sector) {
+  const normalizedSector = `${sector ?? ""}`.trim().toLowerCase();
+
+  if (!normalizedSector) {
+    return BENGALURU_CENTER;
+  }
+
+  const aliasMatch = CITY_RESILIENCE_SECTOR_ALIASES.find((alias) =>
+    normalizedSector.includes(alias.key),
+  );
+
+  return aliasMatch?.coordinate ?? BENGALURU_CENTER;
+}
+
+async function resolveCityResilienceGeocode(sector, city, fallbackCoordinate) {
+  const normalizedSector = `${sector ?? ""}`.trim();
+
+  if (!normalizedSector) {
+    return fallbackCoordinate ?? BENGALURU_CENTER;
+  }
+
+  const cacheKey = `${CITY_RESILIENCE_GEOCODE_CACHE_PREFIX}${city.toLowerCase()}:${normalizedSector.toLowerCase()}`;
+  const cachedCoordinate = getCachedGeocodeCoordinate(cacheKey);
+
+  if (cachedCoordinate) {
+    return cachedCoordinate;
+  }
+
+  try {
+    const query = `${normalizedSector}, ${city}, Karnataka, India`;
+    const searchParams = new URLSearchParams({
+      q: query,
+      format: "jsonv2",
+      limit: "1",
+    });
+    const response = await fetch(`${NOMINATIM_SEARCH_URL}?${searchParams.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const results = await response.json();
+    const bestResult = Array.isArray(results) ? results[0] : null;
+    const longitude = Number(bestResult?.lon);
+    const latitude = Number(bestResult?.lat);
+
+    if (Number.isFinite(longitude) && Number.isFinite(latitude)) {
+      const coordinate = [longitude, latitude];
+      setCachedGeocodeCoordinate(cacheKey, coordinate);
+      await wait(1100);
+      return coordinate;
+    }
+  } catch {
+    // Fall back to local alias/center when the free geocoder is unavailable.
+  }
+
+  if (fallbackCoordinate) {
+    setCachedGeocodeCoordinate(cacheKey, fallbackCoordinate);
+  }
+
+  return fallbackCoordinate ?? BENGALURU_CENTER;
+}
+
+function getCachedGeocodeCoordinate(cacheKey) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(cacheKey);
+
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(rawValue);
+
+    if (
+      Array.isArray(parsedValue) &&
+      Number.isFinite(Number(parsedValue[0])) &&
+      Number.isFinite(Number(parsedValue[1]))
+    ) {
+      return [Number(parsedValue[0]), Number(parsedValue[1])];
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function setCachedGeocodeCoordinate(cacheKey, coordinate) {
+  if (typeof window === "undefined" || !Array.isArray(coordinate)) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify(coordinate));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function wait(durationMs) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
 }
 
 function buildCircleCoordinates(center, radiusMeters, stepCount = 48) {

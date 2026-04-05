@@ -435,18 +435,19 @@ export default function StatsPanel({
                 <SectionHeader
                   icon={BarChart3}
                   title="City Analysis"
-                  subtitle="Sector resilience scores from backend sampling"
+                  subtitle="City resilience response from backend"
                 />
 
                 <div className="stats-grid">
-                  <StatTile label="Samples" value={formatInteger(analysisStats.sampleCount)} detail={analysisStats.connected ? "Live score grid" : "Backend offline"} />
+                  <StatTile label="City" value={analysisStats.city} detail={analysisStats.connected ? "Live backend data" : "Backend offline"} />
+                  <StatTile label="Infrastructure" value={formatInteger(analysisStats.totalInfrastructureCount)} detail="Reported city infrastructure" />
+                  <StatTile label="Weakest Zones" value={formatInteger(analysisStats.sampleCount)} detail="Returned by city resilience API" />
                   <StatTile label="Average" value={formatOneDecimal(analysisStats.averageScore)} detail="Average city resilience score" />
                   <StatTile label="Weakest" value={formatInteger(analysisStats.weakestScore)} detail={analysisStats.weakestSectorName} />
                   <StatTile label="Strongest" value={formatInteger(analysisStats.strongestScore)} detail={analysisStats.strongestSectorName} />
-                  <StatTile label="Hospitals" value={formatInteger(analysisStats.hospitals)} detail="Total across sampled sectors" />
-                  <StatTile label="Police" value={formatInteger(analysisStats.policeStations)} detail="Total across sampled sectors" />
-                  <StatTile label="Fire" value={formatInteger(analysisStats.fireStations)} detail="Total across sampled sectors" />
-                  <StatTile label="Weakest Cap." value={formatInteger(analysisStats.weakestSectorFacilityCount)} detail="Facilities in weakest sector" />
+                  <StatTile label="Hospitals" value={formatInteger(analysisStats.hospitals)} detail="Total across weakest zones" />
+                  <StatTile label="Police" value={formatInteger(analysisStats.policeStations)} detail="Total across weakest zones" />
+                  <StatTile label="Fire" value={formatInteger(analysisStats.fireStations)} detail="Total across weakest zones" />
                 </div>
 
                 <ChartCard title="Score Timeline" subtitle={analysisStats.lastSyncAt ? `Updated ${new Date(analysisStats.lastSyncAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}` : "Awaiting backend data"}>
@@ -464,7 +465,7 @@ export default function StatsPanel({
                   />
                 </ChartCard>
 
-                <ChartCard title="Weakest Sector Watch" subtitle={analysisStats.error ? analysisStats.error : "Lowest scoring sampled sectors"}>
+                <ChartCard title="Weakest Sector Watch" subtitle={analysisStats.error ? analysisStats.error : "Lowest scoring weakest zones"}>
                   {analysisStats.weakestSectors.length > 0 ? (
                     <BarListChart items={analysisStats.weakestSectors} color="#f97316" />
                   ) : (
