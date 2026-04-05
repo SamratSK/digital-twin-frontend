@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
   Droplets,
@@ -197,11 +198,13 @@ export default function StatsPanel({
   trafficStats,
   waterStats,
   powerStats,
+  analysisStats,
 }) {
   const [history, setHistory] = useState({
     traffic: [],
     water: [],
     energy: [],
+    analysis: [],
   });
 
   useEffect(() => {
@@ -240,6 +243,18 @@ export default function StatsPanel({
     }));
   }, [powerStats.sampleId, powerStats.totalDemandMW, powerStats.servedMW, powerStats.averageVoltageKV]);
 
+  useEffect(() => {
+    setHistory((current) => ({
+      ...current,
+      analysis: appendHistory(current.analysis, {
+        sampleId: analysisStats.sampleId,
+        primary: analysisStats.averageScore,
+        secondary: analysisStats.weakestScore,
+        tertiary: analysisStats.strongestScore,
+      }),
+    }));
+  }, [analysisStats.sampleId, analysisStats.averageScore, analysisStats.weakestScore, analysisStats.strongestScore]);
+
   return (
     <aside className={`stats-panel${collapsed ? " is-collapsed" : ""}`}>
       <div className="stats-panel-shell">
@@ -249,7 +264,13 @@ export default function StatsPanel({
 
         {collapsed ? (
           <div className="stats-panel-collapsed-label">
-            {activeSection === "traffic" ? "Traffic" : activeSection === "water" ? "Water" : "Energy"}
+            {activeSection === "traffic"
+              ? "Traffic"
+              : activeSection === "water"
+                ? "Water"
+                : activeSection === "energy"
+                  ? "Energy"
+                  : "Analysis"}
           </div>
         ) : (
           <div className="stats-panel-body">
@@ -404,6 +425,50 @@ export default function StatsPanel({
                     <BarListChart items={powerStats.topDistricts} color="#f59e0b" />
                   ) : (
                     <div className="stats-empty-state">Energy layer is off</div>
+                  )}
+                </ChartCard>
+              </>
+            ) : null}
+
+            {activeSection === "analysis" ? (
+              <>
+                <SectionHeader
+                  icon={BarChart3}
+                  title="City Analysis"
+                  subtitle="Sector resilience scores from backend sampling"
+                />
+
+                <div className="stats-grid">
+                  <StatTile label="Samples" value={formatInteger(analysisStats.sampleCount)} detail={analysisStats.connected ? "Live score grid" : "Backend offline"} />
+                  <StatTile label="Average" value={formatOneDecimal(analysisStats.averageScore)} detail="Average city resilience score" />
+                  <StatTile label="Weakest" value={formatInteger(analysisStats.weakestScore)} detail={analysisStats.weakestSectorName} />
+                  <StatTile label="Strongest" value={formatInteger(analysisStats.strongestScore)} detail={analysisStats.strongestSectorName} />
+                  <StatTile label="Hospitals" value={formatInteger(analysisStats.hospitals)} detail="Total across sampled sectors" />
+                  <StatTile label="Police" value={formatInteger(analysisStats.policeStations)} detail="Total across sampled sectors" />
+                  <StatTile label="Fire" value={formatInteger(analysisStats.fireStations)} detail="Total across sampled sectors" />
+                  <StatTile label="Weakest Cap." value={formatInteger(analysisStats.weakestSectorFacilityCount)} detail="Facilities in weakest sector" />
+                </div>
+
+                <ChartCard title="Score Timeline" subtitle={analysisStats.lastSyncAt ? `Updated ${new Date(analysisStats.lastSyncAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}` : "Awaiting backend data"}>
+                  <Legend
+                    items={[
+                      { label: "Average", color: "#2563eb" },
+                      { label: "Weakest", color: "#dc2626" },
+                    ]}
+                  />
+                  <LineChart
+                    primary={history.analysis.map((item) => item.primary)}
+                    secondary={history.analysis.map((item) => item.secondary)}
+                    primaryColor="#2563eb"
+                    secondaryColor="#dc2626"
+                  />
+                </ChartCard>
+
+                <ChartCard title="Weakest Sector Watch" subtitle={analysisStats.error ? analysisStats.error : "Lowest scoring sampled sectors"}>
+                  {analysisStats.weakestSectors.length > 0 ? (
+                    <BarListChart items={analysisStats.weakestSectors} color="#f97316" />
+                  ) : (
+                    <div className="stats-empty-state">No city score data</div>
                   )}
                 </ChartCard>
               </>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Car, Droplets, Zap } from "lucide-react";
+import { BarChart3, Car, Droplets, Zap } from "lucide-react";
 import { POWER_METRIC_OPTIONS } from "../data/offlinePower.js";
 import { WATER_METRIC_OPTIONS } from "../data/offlineWater.js";
 
@@ -107,6 +107,7 @@ export default function ControlPanel({
   powerSummary,
   powerIncidents,
   onDeletePowerIncident,
+  cityAnalysisState,
   canStart,
   canClear,
   onStart,
@@ -174,6 +175,14 @@ export default function ControlPanel({
             onActivate={onActiveSectionChange}
           >
             <Zap />
+          </SectionButton>
+          <SectionButton
+            sectionId="analysis"
+            label="City Analysis"
+            activeSection={activeSection}
+            onActivate={onActiveSectionChange}
+          >
+            <BarChart3 />
           </SectionButton>
         </div>
 
@@ -677,6 +686,81 @@ export default function ControlPanel({
                   </div>
                 ) : (
                   <div className="panel-empty">No energy faults</div>
+                )}
+              </Card>
+            </div>
+          ) : null}
+
+          {activeSection === "analysis" ? (
+            <div className="sidebar-panel-body">
+              <PanelIntro
+                title="City Analysis"
+                subtitle="Backend resilience scoring across sampled city sectors"
+              />
+
+              <Card title="Score Scan">
+                <div
+                  className={`water-alert${
+                    cityAnalysisState.error || cityAnalysisState.loading ? " is-active" : ""
+                  }`}
+                >
+                  {cityAnalysisState.loading
+                    ? "Scanning city sectors..."
+                    : cityAnalysisState.error
+                      ? cityAnalysisState.error
+                      : cityAnalysisState.connected
+                        ? `Live city score scan${cityAnalysisState.lastSyncAt ? ` · ${new Date(
+                            cityAnalysisState.lastSyncAt,
+                          ).toLocaleTimeString("en-US", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                            hour12: false,
+                          })}` : ""}`
+                        : "Waiting for city analysis backend"}
+                </div>
+
+                <div className="water-summary" aria-label="City analysis summary">
+                  <div className="summary-card">
+                    <span>Sectors</span>
+                    <strong>{cityAnalysisState.rows.length}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span>Status</span>
+                    <strong>{cityAnalysisState.connected ? "Live" : "Down"}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span>Mode</span>
+                    <strong>Score Grid</strong>
+                  </div>
+                </div>
+              </Card>
+
+              <Card title="Weakest Sectors">
+                {cityAnalysisState.rows.length > 0 ? (
+                  <div className="hotspot-list" aria-label="Weakest sectors">
+                    {cityAnalysisState.rows
+                      .slice()
+                      .sort(
+                        (left, right) =>
+                          Number(left?.total_score ?? Infinity) -
+                          Number(right?.total_score ?? Infinity),
+                      )
+                      .slice(0, 5)
+                      .map((row, index) => (
+                        <div
+                          key={`${row?.location?.latitude ?? index}:${row?.location?.longitude ?? index}`}
+                          className="hotspot-item"
+                        >
+                          <span>
+                            {index + 1}. {row?.weakest_sector?.weakest_sector_name ?? "Unavailable"}
+                          </span>
+                          <small>Score {Math.round(Number(row?.total_score ?? 0))}</small>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="panel-empty">No city score data</div>
                 )}
               </Card>
             </div>

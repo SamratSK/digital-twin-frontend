@@ -58,6 +58,13 @@ export async function fetchSynthverseApprovedEvents(baseUrl) {
   return Array.isArray(response?.data?.events) ? response.data.events : [];
 }
 
+export async function fetchSynthverseAreaScore(baseUrl, coordinate) {
+  const [longitude, latitude] = coordinate ?? BENGALURU_CENTER;
+  const query = `latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`;
+  const response = await requestJson(baseUrl, `/api/score?${query}`);
+  return response?.data ?? null;
+}
+
 export async function fetchSynthverseEmergencyResources(baseUrl, coordinate) {
   const [longitude, latitude] = coordinate ?? BENGALURU_CENTER;
   const query = `latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`;
@@ -261,6 +268,52 @@ export function buildSynthverseScanAreaGeoJSON(coordinate, radiusMeters = SYNTHV
       },
     ],
   };
+}
+
+export function buildSynthverseCityAnalysisGeoJSON(scoreRows) {
+  const features = (Array.isArray(scoreRows) ? scoreRows : [])
+    .map((row, index) => {
+      const latitude = Number(row?.location?.latitude ?? row?.latitude);
+      const longitude = Number(row?.location?.longitude ?? row?.longitude);
+
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return null;
+      }
+
+      const totalScore = Number(row?.total_score ?? 0);
+      const hospitals = Number(row?.facilities?.hospitals ?? 0);
+      const policeStations = Number(row?.facilities?.police_stations ?? 0);
+      const fireStations = Number(row?.facilities?.fire_stations ?? 0);
+      const weakestSector = row?.weakest_sector ?? {};
+
+      return {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [longitude, latitude],
+        },
+        properties: {
+          id: `city-analysis:${index + 1}`,
+          label: `${Math.round(totalScore)}`,
+          totalScore,
+          hospitals,
+          policeStations,
+          fireStations,
+          weakestSectorId: weakestSector?.weakest_sector_id ?? "",
+          weakestSectorName: weakestSector?.weakest_sector_name ?? "Unavailable",
+          weakestSectorFacilityCount: Number(weakestSector?.facility_count ?? 0),
+          facilityCount: hospitals + policeStations + fireStations,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  return features.length > 0
+    ? {
+        type: "FeatureCollection",
+        features,
+      }
+    : emptyFeatureCollection();
 }
 
 export function summarizeSynthverseSensors(nodes, sensors) {

@@ -316,7 +316,7 @@ class OfflineRouter {
     const signature = hotspots
       .map(
         (hotspot) =>
-          `${hotspot.id}:${hotspot.coordinate[0].toFixed(5)}:${hotspot.coordinate[1].toFixed(5)}:${Math.round(hotspot.radiusMeters)}`,
+          `${hotspot.id}:${hotspot.coordinate[0].toFixed(5)}:${hotspot.coordinate[1].toFixed(5)}:${Math.round(hotspot.radiusMeters)}:${hotspot.blocking ? 1 : 0}`,
       )
       .join("|");
 
@@ -332,6 +332,7 @@ class OfflineRouter {
         x: hotspot.coordinate[0] * this.lngScale,
         y: hotspot.coordinate[1] * LAT_SCALE_METERS,
         radiusMeters: hotspot.radiusMeters,
+        blocking: Boolean(hotspot.blocking),
       })),
     };
   }
@@ -371,6 +372,11 @@ class OfflineRouter {
       }
 
       if (bestDistance < hotspot.radiusMeters) {
+        if (hotspot.blocking) {
+          penalty = Number.POSITIVE_INFINITY;
+          return;
+        }
+
         penalty +=
           HOTSPOT_ENTRY_PENALTY_METERS +
           (hotspot.radiusMeters - bestDistance) * HOTSPOT_DEPTH_PENALTY_SCALE;

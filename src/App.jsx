@@ -78,16 +78,19 @@ import {
   createTrafficSignalSystem,
 } from "./lib/trafficSignals.js";
 import {
+  buildAnalysisStatsSnapshot,
   buildPowerStatsSnapshot,
   buildTrafficStatsSnapshot,
   buildWaterStatsSnapshot,
 } from "./lib/dashboardStats.js";
 import {
+  buildSynthverseCityAnalysisGeoJSON,
   buildSynthverseEventHotspots,
   buildSynthverseTrafficEventZonesGeoJSON,
   buildSynthverseTrafficEventsGeoJSON,
   createEmptySynthverseApiState,
   DEFAULT_SYNTHVERSE_API_BASE_URL,
+  fetchSynthverseAreaScore,
   fetchSynthverseApprovedEvents,
   fetchSynthverseSensors,
   normalizeSynthverseApiBaseUrl,
@@ -97,6 +100,8 @@ const TRAFFIC_HOTSPOT_REFRESH_MS = 700;
 const TRAFFIC_HOTSPOT_ACTIVATION_DELAY_MS = 900;
 const SYNTHVERSE_API_LOCAL_STORAGE_KEY = "synthverse-api-base-url";
 const SYNTHVERSE_CORE_REFRESH_MS = 15000;
+const SYNTHVERSE_ANALYSIS_REFRESH_MS = 120000;
+const CITY_ANALYSIS_MAX_CALLS = 20;
 const CAMPUS_FLOORPLAN_POLL_MS = 2000;
 const CAMPUS_EMERGENCY_TEMPERATURE = 37;
 
@@ -116,6 +121,17 @@ function createEmptyCampusFloorplanState() {
       exits: [],
       hallway: [],
     },
+  };
+}
+
+function createEmptyCityAnalysisState() {
+  return {
+    loading: false,
+    connected: false,
+    error: "",
+    lastSyncAt: "",
+    rows: [],
+    geojson: emptyFeatureCollection(),
   };
 }
 
@@ -166,6 +182,7 @@ function App() {
   const [vehicleProbe, setVehicleProbe] = useState(null);
   const [synthverseApiState, setSynthverseApiState] = useState(createEmptySynthverseApiState);
   const [campusFloorplanState, setCampusFloorplanState] = useState(createEmptyCampusFloorplanState);
+  const [cityAnalysisState, setCityAnalysisState] = useState(createEmptyCityAnalysisState);
   const [campusEmergencyDisplay, setCampusEmergencyDisplay] = useState(() => ({
     alert: emptyFeatureCollection(),
     routes: emptyFeatureCollection(),
@@ -188,11 +205,13 @@ function App() {
   const trafficEventFeaturesRef = useRef([]);
   const trafficSignalFeaturesRef = useRef(overlayData.trafficSignals?.features ?? []);
   const campusFloorplanRequestIdRef = useRef(0);
+  const cityAnalysisRequestInFlightRef = useRef(false);
   const hoverPopupRef = useRef(null);
 
   const showTrafficLayers = activeSection === "traffic";
   const showWaterLayers = activeSection === "water";
   const showPowerLayers = activeSection === "energy";
+  const showAnalysisLayers = activeSection === "analysis";
   const normalizedSynthverseApiBaseUrl = normalizeSynthverseApiBaseUrl(synthverseApiBaseUrl);
   const trafficEventGeoJSON = buildSynthverseTrafficEventsGeoJSON(synthverseApiState.approvedEvents);
   const trafficEventZonesGeoJSON = buildSynthverseTrafficEventZonesGeoJSON(
@@ -200,10 +219,14 @@ function App() {
   );
   const trafficEventHotspots = buildSynthverseEventHotspots(synthverseApiState.approvedEvents);
   const campusEmergencyHotspots = buildCampusEmergencyRoutingHotspots(campusEmergencyDisplay.alert);
+  const campusEmergencyRouteHotspots = buildCampusEmergencyRouteHotspots(
+    campusEmergencyDisplay.routes,
+  );
   const persistentRoutingHotspots = [
     ...hotspots,
     ...trafficEventHotspots,
     ...campusEmergencyHotspots,
+    ...campusEmergencyRouteHotspots,
   ];
   const persistentRoutingHotspotsSignature = buildRoutingHotspotSignature(
     persistentRoutingHotspots,
@@ -721,6 +744,72 @@ function App() {
     }
   });
 
+  const refreshCityAnalysis = useEffectEvent(async () => {
+    if (!normalizedSynthverseApiBaseUrl) {
+      startTransition(() => {
+        setCityAnalysisState(createEmptyCityAnalysisState());
+      });
+      return;
+    }
+
+    if (cityAnalysisRequestInFlightRef.current) {
+      return;
+    }
+
+    cityAnalysisRequestInFlightRef.current = true;
+
+    startTransition(() => {
+      setCityAnalysisState((current) => ({
+        ...current,
+        loading: true,
+        error: "",
+      }));
+    });
+
+    try {
+      const coordinates = buildCityAnalysisGridCoordinates(MAP_VIEW_BOUNDS, 4, 5);
+      const rows = (
+        await Promise.all(
+          coordinates.map(async (coordinate, index) => {
+            const score = await fetchSynthverseAreaScore(normalizedSynthverseApiBaseUrl, coordinate);
+            return score
+              ? {
+                  ...score,
+                  location: {
+                    latitude: Number(score?.location?.latitude ?? coordinate[1]),
+                    longitude: Number(score?.location?.longitude ?? coordinate[0]),
+                    label: `Zone ${index + 1}`,
+                  },
+                }
+              : null;
+          }),
+        )
+      ).filter(Boolean);
+
+      startTransition(() => {
+        setCityAnalysisState({
+          loading: false,
+          connected: true,
+          error: "",
+          lastSyncAt: new Date().toISOString(),
+          rows,
+          geojson: buildSynthverseCityAnalysisGeoJSON(rows),
+        });
+      });
+    } catch (error) {
+      startTransition(() => {
+        setCityAnalysisState((current) => ({
+          ...current,
+          loading: false,
+          connected: false,
+          error: error instanceof Error ? error.message : "Failed to load city analysis.",
+        }));
+      });
+    } finally {
+      cityAnalysisRequestInFlightRef.current = false;
+    }
+  });
+
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setStatsSampleId((currentValue) => currentValue + 1);
@@ -849,6 +938,21 @@ function App() {
       window.clearInterval(intervalId);
     };
   }, [normalizedSynthverseApiBaseUrl]);
+
+  useEffect(() => {
+    if (activeSection !== "analysis") {
+      return undefined;
+    }
+
+    refreshCityAnalysis();
+    const intervalId = window.setInterval(() => {
+      refreshCityAnalysis();
+    }, SYNTHVERSE_ANALYSIS_REFRESH_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeSection, refreshCityAnalysis]);
 
   useEffect(() => {
     simulationRef.current = simulation;
@@ -1020,6 +1124,11 @@ function App() {
     );
     updateGeoJsonSource(
       mapInstance,
+      "cityAnalysis",
+      showAnalysisLayers ? cityAnalysisState.geojson : emptyFeatureCollection(),
+    );
+    updateGeoJsonSource(
+      mapInstance,
       "trafficEventZones",
       showTrafficLayers ? trafficEventZonesGeoJSON : emptyFeatureCollection(),
     );
@@ -1079,9 +1188,11 @@ function App() {
     return undefined;
   }, [
     campusEmergencyDisplay,
+    cityAnalysisState.geojson,
     mapReady,
     overlayData,
     selectedCampusId,
+    showAnalysisLayers,
     showPowerLayers,
     showTrafficLayers,
     showWaterLayers,
@@ -1353,6 +1464,8 @@ function App() {
         attachCursor(mapInstance, "traffic-event-zones-outline", pickModeRef);
         attachCursor(mapInstance, "traffic-event-points", pickModeRef);
         attachCursor(mapInstance, "traffic-event-labels", pickModeRef);
+        attachCursor(mapInstance, "city-analysis-circles", pickModeRef);
+        attachCursor(mapInstance, "city-analysis-labels", pickModeRef);
         attachCursor(mapInstance, "traffic-signal-points", pickModeRef);
         attachCursor(mapInstance, "traffic-direction-cones", pickModeRef);
         attachCursor(mapInstance, "hotspot-fill", pickModeRef);
@@ -1383,6 +1496,12 @@ function App() {
             "traffic-event-labels",
           ],
           renderTrafficEventPopupHtml,
+        );
+        attachHoverPopup(
+          mapInstance,
+          hoverPopupRef,
+          ["city-analysis-circles", "city-analysis-labels"],
+          renderCityAnalysisPopupHtml,
         );
         attachHoverPopup(
           mapInstance,
@@ -1950,6 +2069,10 @@ function App() {
     powerIncidents,
     overlayData,
   });
+  const analysisStats = buildAnalysisStatsSnapshot({
+    sampleId: statsSampleId,
+    cityAnalysisState,
+  });
 
   return (
     <main className={`app${statsPanelCollapsed ? " is-stats-collapsed" : ""}`}>
@@ -1993,6 +2116,7 @@ function App() {
         powerSummary={powerState.summary}
         powerIncidents={powerIncidents}
         onDeletePowerIncident={handleDeletePowerIncident}
+        cityAnalysisState={cityAnalysisState}
         pickMode={pickMode}
         onTogglePickMode={togglePickMode}
         hotspots={hotspots}
@@ -2021,6 +2145,7 @@ function App() {
         trafficStats={trafficStats}
         waterStats={waterStats}
         powerStats={powerStats}
+        analysisStats={analysisStats}
       />
 
       <CampusFloorplanModal
@@ -2215,6 +2340,68 @@ function buildCampusEmergencyRoutingHotspots(alertGeoJSON) {
   ];
 }
 
+function buildCampusEmergencyRouteHotspots(routesGeoJSON) {
+  const features = Array.isArray(routesGeoJSON?.features) ? routesGeoJSON.features : [];
+
+  return features.flatMap((feature) => {
+    const coordinates = feature?.geometry?.coordinates;
+    const assetType = feature?.properties?.assetType ?? "responder";
+    const label = feature?.properties?.label ?? capitalizeWord(assetType);
+
+    if (!Array.isArray(coordinates) || coordinates.length < 2) {
+      return [];
+    }
+
+    const sampledCoordinates = sampleEmergencyRouteHotspotCoordinates(coordinates);
+
+    return sampledCoordinates.map((coordinate, index) => ({
+      id: `${feature?.properties?.id ?? `campus-emergency-route:${assetType}`}:corridor:${index + 1}`,
+      label: `${formatEmergencyAssetTypeLabel(assetType)} corridor`,
+      message: `${formatEmergencyAssetTypeLabel(assetType)} route\n${label}`,
+      coordinate,
+      radiusMeters: 68,
+      blocking: true,
+      kind: "campus-emergency-route",
+      vehicleCount: 0,
+    }));
+  });
+}
+
+function sampleEmergencyRouteHotspotCoordinates(coordinates) {
+  const sampledCoordinates = [];
+  let distanceSinceLastSample = 0;
+
+  for (let index = 0; index < coordinates.length; index += 1) {
+    const coordinate = coordinates[index];
+
+    if (!Array.isArray(coordinate)) {
+      continue;
+    }
+
+    if (sampledCoordinates.length === 0) {
+      sampledCoordinates.push(coordinate);
+      continue;
+    }
+
+    const previousCoordinate = coordinates[index - 1];
+
+    if (!Array.isArray(previousCoordinate)) {
+      continue;
+    }
+
+    distanceSinceLastSample += metersBetween(previousCoordinate, coordinate);
+
+    const isLastCoordinate = index === coordinates.length - 1;
+
+    if (distanceSinceLastSample >= 135 || isLastCoordinate) {
+      sampledCoordinates.push(coordinate);
+      distanceSinceLastSample = 0;
+    }
+  }
+
+  return sampledCoordinates;
+}
+
 function buildRoutingHotspotSignature(hotspots) {
   return (hotspots ?? [])
     .map((hotspot) => {
@@ -2223,6 +2410,7 @@ function buildRoutingHotspotSignature(hotspots) {
         hotspot?.id ?? "",
         hotspot?.kind ?? "",
         hotspot?.radiusMeters ?? 0,
+        hotspot?.blocking ? 1 : 0,
         Number(coordinate[0]).toFixed(6),
         Number(coordinate[1]).toFixed(6),
       ].join(":");
@@ -2281,6 +2469,43 @@ function mergeEmergencyCoordinates(...lists) {
   return coordinates;
 }
 
+function buildCityAnalysisGridCoordinates(bounds, rowCount = 4, columnCount = 5) {
+  const southWest = bounds?.[0];
+  const northEast = bounds?.[1];
+
+  if (!Array.isArray(southWest) || !Array.isArray(northEast)) {
+    return [BENGALURU_CENTER];
+  }
+
+  const [west, south] = southWest;
+  const [east, north] = northEast;
+  const longitudeInset = (east - west) * 0.08;
+  const latitudeInset = (north - south) * 0.08;
+  const effectiveWest = west + longitudeInset;
+  const effectiveEast = east - longitudeInset;
+  const effectiveSouth = south + latitudeInset;
+  const effectiveNorth = north - latitudeInset;
+  const coordinates = [];
+
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+      if (coordinates.length >= CITY_ANALYSIS_MAX_CALLS) {
+        return coordinates;
+      }
+
+      const longitude =
+        effectiveWest +
+        ((columnIndex + 0.5) / columnCount) * (effectiveEast - effectiveWest);
+      const latitude =
+        effectiveSouth +
+        ((rowIndex + 0.5) / rowCount) * (effectiveNorth - effectiveSouth);
+      coordinates.push([longitude, latitude]);
+    }
+  }
+
+  return coordinates;
+}
+
 function capitalizeWord(value) {
   const text = `${value ?? ""}`;
   return text ? `${text[0].toUpperCase()}${text.slice(1)}` : "";
@@ -2311,6 +2536,8 @@ const PRIORITY_LAYER_IDS = [
   "traffic-event-zones-outline",
   "traffic-event-points",
   "traffic-event-labels",
+  "city-analysis-circles",
+  "city-analysis-labels",
   "hotspot-fill",
   "hotspot-outline",
   "hotspot-centers",
@@ -2413,6 +2640,19 @@ function renderTrafficEventPopupHtml(properties) {
     `Traffic score · ${formatPopupValue(properties.trafficScore)}`,
     `Expected crowd · ${formatPopupValue(properties.expectedCrowd)}`,
     properties.radiusMeters ? `Impact radius · ${formatPopupValue(properties.radiusMeters, "m")}` : null,
+  ].filter(Boolean);
+
+  return buildPopupHtml(title, subtitle, details);
+}
+
+function renderCityAnalysisPopupHtml(properties) {
+  const title = escapeHtml(`Score ${formatPopupValue(properties.totalScore)}`);
+  const subtitle = escapeHtml(properties.weakestSectorName ?? "City analysis sector");
+  const details = [
+    `Hospitals · ${formatPopupValue(properties.hospitals)}`,
+    `Police stations · ${formatPopupValue(properties.policeStations)}`,
+    `Fire stations · ${formatPopupValue(properties.fireStations)}`,
+    `Weakest sector facilities · ${formatPopupValue(properties.weakestSectorFacilityCount)}`,
   ].filter(Boolean);
 
   return buildPopupHtml(title, subtitle, details);

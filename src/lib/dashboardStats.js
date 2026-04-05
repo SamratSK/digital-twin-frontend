@@ -254,3 +254,74 @@ export function buildPowerStatsSnapshot({
     topDistricts,
   };
 }
+
+export function buildAnalysisStatsSnapshot({
+  sampleId,
+  cityAnalysisState,
+}) {
+  const rows = Array.isArray(cityAnalysisState?.rows) ? cityAnalysisState.rows : [];
+  const totalScores = rows.map((row) => Number(row?.total_score ?? 0)).filter(Number.isFinite);
+  const averageScore =
+    totalScores.length > 0
+      ? totalScores.reduce((sum, value) => sum + value, 0) / totalScores.length
+      : 0;
+  const strongestRow =
+    rows.length > 0
+      ? rows.reduce((best, row) =>
+          Number(row?.total_score ?? 0) > Number(best?.total_score ?? -Infinity) ? row : best,
+        rows[0])
+      : null;
+  const weakestRow =
+    rows.length > 0
+      ? rows.reduce((best, row) =>
+          Number(row?.total_score ?? Infinity) < Number(best?.total_score ?? Infinity) ? row : best,
+        rows[0])
+      : null;
+  const weakestSectors = rows
+    .map((row, index) => ({
+      id: `${row?.weakest_sector?.weakest_sector_id ?? row?.location?.latitude ?? index}:${index}`,
+      label: row?.weakest_sector?.weakest_sector_name ?? "Unavailable",
+      value: Number(row?.total_score ?? 0),
+      detail: `${Number(row?.weakest_sector?.facility_count ?? 0)} facilities`,
+    }))
+    .sort((left, right) => left.value - right.value)
+    .slice(0, 5);
+  const facilityTotals = rows.reduce(
+    (totals, row) => {
+      totals.hospitals += Number(row?.facilities?.hospitals ?? 0);
+      totals.policeStations += Number(row?.facilities?.police_stations ?? 0);
+      totals.fireStations += Number(row?.facilities?.fire_stations ?? 0);
+      return totals;
+    },
+    {
+      hospitals: 0,
+      policeStations: 0,
+      fireStations: 0,
+    },
+  );
+
+  return {
+    sampleId,
+    loading: Boolean(cityAnalysisState?.loading),
+    connected: Boolean(cityAnalysisState?.connected),
+    error: cityAnalysisState?.error ?? "",
+    lastSyncAt: cityAnalysisState?.lastSyncAt ?? "",
+    sampleCount: rows.length,
+    averageScore: roundValue(averageScore, 1),
+    strongestScore: roundValue(strongestRow?.total_score ?? 0, 0),
+    weakestScore: roundValue(weakestRow?.total_score ?? 0, 0),
+    strongestSectorName:
+      strongestRow?.weakest_sector?.weakest_sector_name ??
+      strongestRow?.location?.label ??
+      "Unavailable",
+    weakestSectorName:
+      weakestRow?.weakest_sector?.weakest_sector_name ??
+      weakestRow?.location?.label ??
+      "Unavailable",
+    weakestSectorFacilityCount: Number(weakestRow?.weakest_sector?.facility_count ?? 0),
+    hospitals: facilityTotals.hospitals,
+    policeStations: facilityTotals.policeStations,
+    fireStations: facilityTotals.fireStations,
+    weakestSectors,
+  };
+}

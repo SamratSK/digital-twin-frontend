@@ -37,6 +37,15 @@ const LEGEND_ITEMS = {
       { id: "fault", label: "Fault / outage", swatchClassName: "is-energy-fault" },
     ],
   },
+  analysis: {
+    title: "Analysis Legend",
+    items: [
+      { id: "low-score", label: "Low resilience score", swatchClassName: "is-analysis-low" },
+      { id: "mid-score", label: "Moderate score", swatchClassName: "is-analysis-mid" },
+      { id: "high-score", label: "High resilience score", swatchClassName: "is-analysis-high" },
+      { id: "weakest", label: "Weakest sector highlight", swatchClassName: "is-analysis-weakest" },
+    ],
+  },
 };
 
 export default function MapLegend({ activeSection, statsPanelCollapsed }) {
