@@ -55,6 +55,14 @@ export async function fetchSynthverseSensors(baseUrl) {
   return requestJson(baseUrl, "/api/sensors");
 }
 
+export async function authorizeSynthverseEgressNode(baseUrl, id) {
+  if (!id) {
+    throw new Error("No egress node id provided.");
+  }
+
+  return requestJson(baseUrl, `/api/${encodeURIComponent(id)}`);
+}
+
 export async function fetchSynthverseApprovedEvents(baseUrl) {
   const response = await requestJson(baseUrl, "/api/events");
   return Array.isArray(response?.data?.events) ? response.data.events : [];

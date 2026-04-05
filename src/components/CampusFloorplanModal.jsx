@@ -1,6 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { AlertTriangle, CheckCircle2, ChevronRight, X } from "lucide-react";
 import { BMSCE_MEL_FLOORPLAN } from "../data/bmsceFloorplan.js";
+import { authorizeSynthverseEgressNode } from "../lib/synthverseApi.js";
+
+const FLOORPLAN_EMERGENCY_TEMPERATURE = 32;
 
 export default function CampusFloorplanModal({
   open,
@@ -10,10 +13,14 @@ export default function CampusFloorplanModal({
   nodes,
   sensors,
   lastSyncAt,
+  apiBaseUrl,
   onClose,
 }) {
+  const lastAuthorizedTargetRef = useRef("");
+
   useEffect(() => {
     if (!open) {
+      lastAuthorizedTargetRef.current = "";
       return undefined;
     }
 
@@ -28,10 +35,6 @@ export default function CampusFloorplanModal({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onClose]);
-
-  if (!open) {
-    return null;
-  }
 
   const floorplan = BMSCE_MEL_FLOORPLAN;
   const floorplanWidth = floorplan.mapMetadata.totalWidth;
@@ -79,6 +82,33 @@ export default function CampusFloorplanModal({
       : lastSyncAt
         ? `Live temperature guidance updated ${formatModalTime(lastSyncAt)}`
         : "Temperature guidance ready";
+
+  useEffect(() => {
+    if (!open || !apiBaseUrl || !recommendedTarget?.id) {
+      return;
+    }
+
+    if (lastAuthorizedTargetRef.current === recommendedTarget.id) {
+      return;
+    }
+
+    let cancelled = false;
+
+    authorizeSynthverseEgressNode(apiBaseUrl, recommendedTarget.id).catch((authorizationError) => {
+      if (!cancelled) {
+        console.error("Failed to authorize egress node", authorizationError);
+      }
+    });
+    lastAuthorizedTargetRef.current = recommendedTarget.id;
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, open, recommendedTarget?.id]);
+
+  if (!open) {
+    return null;
+  }
 
   return (
     <div className="campus-modal-backdrop" onClick={onClose} aria-hidden="true">
@@ -141,7 +171,7 @@ export default function CampusFloorplanModal({
                 {projectedHallwayNodes.map((node) => {
                   const isStart = node.id === floorplan.routeStartId;
                   const score = hallwaySensorScores.get(node.id) ?? 0;
-                  const isEmergency = score >= 37;
+                  const isEmergency = score >= FLOORPLAN_EMERGENCY_TEMPERATURE;
                   return (
                     <g key={node.id}>
                       {isEmergency ? (
@@ -173,7 +203,7 @@ export default function CampusFloorplanModal({
                         textAnchor="middle"
                         className={`campus-floorplan-temp ${isEmergency ? "is-emergency" : ""}`}
                       >
-                        {Math.round(score)}
+                        {formatTemperature(score)}
                       </text>
                     </g>
                   );
@@ -182,7 +212,7 @@ export default function CampusFloorplanModal({
                 {projectedTargetNodes.map((node) => {
                   const recommended = recommendedTarget?.id === node.id;
                   const score = exitSensorScores.get(node.id) ?? 0;
-                  const isEmergency = score >= 37;
+                  const isEmergency = score >= FLOORPLAN_EMERGENCY_TEMPERATURE;
                   return (
                     <g key={node.id}>
                       {isEmergency ? (
@@ -233,7 +263,9 @@ export default function CampusFloorplanModal({
               <article className="campus-metric-card">
                 <div className="campus-metric-label">Hot Targets</div>
                 <div className="campus-metric-value">{floorplanSummary.blockedExitCount}</div>
-                <div className="campus-metric-detail">Temperature 37 or above</div>
+                <div className="campus-metric-detail">
+                  Temperature {FLOORPLAN_EMERGENCY_TEMPERATURE} or above
+                </div>
               </article>
               <article className="campus-metric-card">
                 <div className="campus-metric-label">Hallway Temperature</div>
@@ -255,7 +287,7 @@ export default function CampusFloorplanModal({
                         {targetRow.kind === "lift" ? "Lift" : "Exit"} · {targetRow.statusLabel} · {targetRow.temperatureLabel}
                       </small>
                     </div>
-                    <span className={getExitBadgeClass(targetRow.score)}>{targetRow.score}</span>
+                    <span className={getExitBadgeClass(targetRow.score)}>{formatTemperature(targetRow.score)}</span>
                   </div>
                 ))}
               </div>
@@ -306,12 +338,18 @@ function summarizeLocalFloorplanSensors(nodes, sensors) {
   const hallwayNodes = Array.isArray(nodes?.hallway) ? nodes.hallway : [];
   const exitScores = createScoreMap(sensors?.exits);
   const hallwayScores = createScoreMap(sensors?.hallway);
-  const accessibleExitCount = exitNodes.filter((node) => (exitScores.get(node.id) ?? 0) < 37).length;
+  const accessibleExitCount = exitNodes.filter(
+    (node) => (exitScores.get(node.id) ?? 0) < FLOORPLAN_EMERGENCY_TEMPERATURE,
+  ).length;
   const blockedExitCount = Math.max(0, exitNodes.length - accessibleExitCount);
   const hallwayValues = hallwayNodes.map((node) => hallwayScores.get(node.id) ?? 0);
   const avgHallwayScore =
     hallwayValues.length > 0
-      ? Math.round(hallwayValues.reduce((sum, value) => sum + value, 0) / hallwayValues.length)
+      ? Number(
+          (
+            hallwayValues.reduce((sum, value) => sum + value, 0) / hallwayValues.length
+          ).toFixed(1),
+        )
       : 0;
 
   return {
@@ -363,7 +401,10 @@ function computeBestEvacuationRoute({ floorplan, exitSensorScores, hallwaySensor
   });
 
   const allTargets = [...floorplan.exits, ...floorplan.lifts];
-  const accessibleTargets = allTargets.filter((target) => (exitSensorScores.get(target.id) ?? 0) < 37);
+  const accessibleTargets = allTargets.filter(
+    (target) =>
+      (exitSensorScores.get(target.id) ?? 0) < FLOORPLAN_EMERGENCY_TEMPERATURE,
+  );
   const targetPool = accessibleTargets.length > 0 ? accessibleTargets : allTargets;
   const targetRows = targetPool
     .map((target) => {
@@ -375,8 +416,11 @@ function computeBestEvacuationRoute({ floorplan, exitSensorScores, hallwaySensor
         score,
         totalCost,
         pathNodeIds: pathResult?.pathNodeIds ?? [],
-        statusLabel: score >= 37 ? "Emergency" : score >= 25 ? "Warm" : "Cool",
-        temperatureLabel: Number.isFinite(totalCost) ? `${Math.round(totalCost)} temp cost` : "No route",
+        statusLabel:
+          score >= FLOORPLAN_EMERGENCY_TEMPERATURE ? "Emergency" : score >= 25 ? "Warm" : "Cool",
+        temperatureLabel: Number.isFinite(totalCost)
+          ? `${totalCost.toFixed(1)} temp cost`
+          : "No route",
         kind: target.type,
       };
     })
@@ -385,8 +429,11 @@ function computeBestEvacuationRoute({ floorplan, exitSensorScores, hallwaySensor
         return left.totalCost - right.totalCost;
       }
 
-      if ((left.score >= 37) !== (right.score >= 37)) {
-        return left.score >= 37 ? 1 : -1;
+      if (
+        (left.score >= FLOORPLAN_EMERGENCY_TEMPERATURE) !==
+        (right.score >= FLOORPLAN_EMERGENCY_TEMPERATURE)
+      ) {
+        return left.score >= FLOORPLAN_EMERGENCY_TEMPERATURE ? 1 : -1;
       }
 
       if (left.score !== right.score) {
@@ -457,8 +504,10 @@ function pushGraphEdge(adjacency, fromId, toId, cost) {
 function getGraphEdgeCost({ leftNode, rightNode, startId, nodeScoreById }) {
   const leftScore = nodeScoreById.get(leftNode.id) ?? 10;
   const rightScore = nodeScoreById.get(rightNode.id) ?? 10;
-  const leftBlocked = leftNode.id !== startId && leftScore >= 37;
-  const rightBlocked = rightNode.id !== startId && rightScore >= 37;
+  const leftBlocked =
+    leftNode.id !== startId && leftScore >= FLOORPLAN_EMERGENCY_TEMPERATURE;
+  const rightBlocked =
+    rightNode.id !== startId && rightScore >= FLOORPLAN_EMERGENCY_TEMPERATURE;
 
   if (leftBlocked || rightBlocked) {
     return Number.POSITIVE_INFINITY;
@@ -510,7 +559,7 @@ function getFloorplanNodeClass(score, nodeType) {
 }
 
 function getExitBadgeClass(score) {
-  if (score >= 37) {
+  if (score >= FLOORPLAN_EMERGENCY_TEMPERATURE) {
     return "campus-exit-badge is-blocked";
   }
 
@@ -531,6 +580,11 @@ function formatModalTime(value) {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value));
+}
+
+function formatTemperature(value) {
+  const numericValue = Number(value ?? 0);
+  return Number.isFinite(numericValue) ? numericValue.toFixed(1) : "0.0";
 }
 
 function projectFloorplanNode(node, metadata) {

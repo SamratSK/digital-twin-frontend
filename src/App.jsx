@@ -101,9 +101,8 @@ const TRAFFIC_HOTSPOT_REFRESH_MS = 700;
 const TRAFFIC_HOTSPOT_ACTIVATION_DELAY_MS = 900;
 const SYNTHVERSE_API_LOCAL_STORAGE_KEY = "synthverse-api-base-url";
 const SYNTHVERSE_CORE_REFRESH_MS = 15000;
-const SYNTHVERSE_ANALYSIS_REFRESH_MS = 120000;
 const CAMPUS_FLOORPLAN_POLL_MS = 2000;
-const CAMPUS_EMERGENCY_TEMPERATURE = 37;
+const CAMPUS_EMERGENCY_TEMPERATURE = 32;
 
 function createEmptyCampusFloorplanState() {
   return {
@@ -935,13 +934,7 @@ function App() {
     }
 
     refreshCityAnalysis();
-    const intervalId = window.setInterval(() => {
-      refreshCityAnalysis();
-    }, SYNTHVERSE_ANALYSIS_REFRESH_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
+    return undefined;
   }, [activeSection, refreshCityAnalysis]);
 
   useEffect(() => {
@@ -2146,6 +2139,7 @@ function App() {
         nodes={campusFloorplanState.nodes}
         sensors={campusFloorplanState.sensors}
         lastSyncAt={campusFloorplanState.lastSyncAt}
+        apiBaseUrl={normalizedSynthverseApiBaseUrl}
         onClose={handleCloseCampusFloorplan}
       />
     </main>
