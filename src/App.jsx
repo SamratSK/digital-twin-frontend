@@ -200,12 +200,15 @@ function App() {
   );
   const trafficEventHotspots = buildSynthverseEventHotspots(synthverseApiState.approvedEvents);
   const campusEmergencyHotspots = buildCampusEmergencyRoutingHotspots(campusEmergencyDisplay.alert);
-  const routingHotspots = [
+  const persistentRoutingHotspots = [
     ...hotspots,
     ...trafficEventHotspots,
     ...campusEmergencyHotspots,
   ];
-  const routingHotspotsSignature = buildRoutingHotspotSignature(routingHotspots);
+  const persistentRoutingHotspotsSignature = buildRoutingHotspotSignature(
+    persistentRoutingHotspots,
+  );
+  const automaticTrafficHotspotsSignature = buildRoutingHotspotSignature(automaticTrafficHotspots);
 
   const setPickState = (nextPickMode) => {
     pickModeRef.current = nextPickMode;
@@ -368,7 +371,8 @@ function App() {
         setSimulation({
           id: `defined:${Date.now()}`,
           mode: "defined",
-          routingSignature: routingHotspotsSignature,
+          routingSignature: persistentRoutingHotspotsSignature,
+          automaticRoutingSignature: "",
           vehicleCount,
           routes: buildSimulationRoutes({ vehicles }),
           vehicles,
@@ -381,7 +385,7 @@ function App() {
     const randomRoutes = buildRoutesFromPlans(
       router,
       routePlans,
-      routingHotspots,
+      persistentRoutingHotspots,
       trafficSignalSystem,
     );
 
@@ -398,7 +402,8 @@ function App() {
       setSimulation({
         id: `randomized:${Date.now()}`,
         mode: "randomized",
-        routingSignature: routingHotspotsSignature,
+        routingSignature: persistentRoutingHotspotsSignature,
+        automaticRoutingSignature: "",
         vehicleCount: vehicles.length,
         routes: buildSimulationRoutes({ vehicles }),
         vehicles,
@@ -1211,7 +1216,10 @@ function App() {
       showTrafficLayers && trafficHeatmapEnabled
         ? buildTrafficHeatmapGeoJSON({
             routes: visibleRoutes,
-            hotspots: routingHotspots,
+            hotspots: [
+              ...persistentRoutingHotspots,
+              ...automaticTrafficHotspots,
+            ],
             eventFeatures: trafficEventGeoJSON.features,
             signalFeatures: overlayData.trafficSignals?.features,
           })
@@ -1222,9 +1230,10 @@ function App() {
     return undefined;
   }, [
     mapReady,
+    automaticTrafficHotspots,
     overlayData.trafficSignals,
+    persistentRoutingHotspots,
     route,
-    routingHotspots,
     showTrafficLayers,
     simulation,
     simulationMode,
@@ -1467,7 +1476,7 @@ function App() {
     const nextRoute = buildRouteFromPlan(
       router,
       routePlan,
-      routingHotspots,
+      persistentRoutingHotspots,
       trafficSignalSystem,
     );
 
@@ -1476,8 +1485,8 @@ function App() {
     });
   }, [
     endSelection,
+    persistentRoutingHotspotsSignature,
     router,
-    routingHotspotsSignature,
     simulationMode,
     startSelection,
     trafficSignalSystem,
@@ -1490,16 +1499,26 @@ function App() {
       return;
     }
 
-    if (currentSimulation.routingSignature === routingHotspotsSignature) {
+    const shouldRefreshPersistentRouting =
+      currentSimulation.routingSignature !== persistentRoutingHotspotsSignature;
+    const shouldRefreshAutomaticRouting =
+      automaticTrafficHotspotsSignature &&
+      currentSimulation.automaticRoutingSignature !== automaticTrafficHotspotsSignature;
+
+    if (!shouldRefreshPersistentRouting && !shouldRefreshAutomaticRouting) {
       return;
     }
+
+    const rerouteHotspots = shouldRefreshAutomaticRouting
+      ? [...persistentRoutingHotspots, ...automaticTrafficHotspots]
+      : persistentRoutingHotspots;
 
     const nextVehicles = rerouteSimulationVehicles({
       router,
       simulation: currentSimulation,
       runtimeByVehicleId: vehicleRuntimeRef.current,
       currentElapsedMs: simulationElapsedRef.current,
-      hotspots: routingHotspots,
+      hotspots: rerouteHotspots,
       trafficSignalSystem,
     });
 
@@ -1515,13 +1534,21 @@ function App() {
 
         return {
           ...activeSimulation,
-          routingSignature: routingHotspotsSignature,
+          routingSignature: persistentRoutingHotspotsSignature,
+          automaticRoutingSignature: shouldRefreshAutomaticRouting
+            ? automaticTrafficHotspotsSignature
+            : activeSimulation.automaticRoutingSignature ?? "",
           routes: buildSimulationRoutes({ vehicles: nextVehicles }),
           vehicles: nextVehicles,
         };
       });
     });
-  }, [router, routingHotspotsSignature, trafficSignalSystem]);
+  }, [
+    automaticTrafficHotspotsSignature,
+    persistentRoutingHotspotsSignature,
+    router,
+    trafficSignalSystem,
+  ]);
 
   useEffect(() => {
     const mapInstance = mapRef.current;
